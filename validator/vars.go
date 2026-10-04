@@ -60,6 +60,9 @@ func VariableValues(
 				rv := reflect.ValueOf(val)
 
 				jsonNumber, isJSONNumber := val.(json.Number)
+				if !isJSONNumber {
+					jsonNumber, isJSONNumber = jsonTextNumber(val)
+				}
 				if isJSONNumber {
 					switch v.Type.NamedType {
 					case "Int":
@@ -126,7 +129,8 @@ func (v *varValidator) validateVarType(
 	}
 
 	if typ.Elem != nil {
-		if val.Kind() != reflect.Slice {
+		// A jsontext.Value is a byte slice, but a JSON number in one is not a list.
+		if _, isNumber := jsonTextNumberValue(val); val.Kind() != reflect.Slice || isNumber {
 			// GraphQL spec says that non-null values should be coerced to an array when possible.
 			// Hence if the value is not a slice, we create a slice and add val to it.
 			slc := reflect.MakeSlice(reflect.SliceOf(val.Type()), 0, 0)
@@ -147,6 +151,14 @@ func (v *varValidator) validateVarType(
 			if err != nil {
 				return val, err
 			}
+		}
+		return val, nil
+	}
+	if n, ok := jsonTextNumberValue(val); ok {
+		// Validate a JSON number in a jsontext.Value as the equivalent
+		// json.Number, and keep the jsontext.Value as the coerced value.
+		if _, err := v.validateVarType(typ, reflect.ValueOf(n)); err != nil {
+			return val, err
 		}
 		return val, nil
 	}
@@ -268,6 +280,15 @@ func (v *varValidator) validateVarType(
 		panic(fmt.Errorf("unsupported type %s", def.Kind))
 	}
 	return val, nil
+}
+
+// jsonTextNumberValue returns val as a json.Number if val holds a
+// jsontext.Value with a JSON number.
+func jsonTextNumberValue(val reflect.Value) (json.Number, bool) {
+	if jsonTextValueType == nil || val.Type() != jsonTextValueType {
+		return "", false
+	}
+	return jsonTextNumber(val.Interface())
 }
 
 func IsValidIntString(val reflect.Value, kind reflect.Kind) bool {
